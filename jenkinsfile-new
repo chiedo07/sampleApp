@@ -1,0 +1,69 @@
+pipeline{
+    agent { label 'ubuntu' }
+
+    parameters {
+        string(name: 'APP_VERSION', defaultValue: 'v1', description: 'App version to build and deploy')
+        choice(name: 'ENV', choices: ['dev', 'staging', 'prod'], description: 'Target environment')
+    }
+    environment{
+        HELM_RELEASE = 'sample-app'  // Helm release name
+        K8S_NAMESPACE = "${params.ENV}"   // Kubernetes namespace
+        SONAR_PROJECT_KEY = 'jenkins'
+        SONAR_HOST_URL = 'http://sonarqube:9000'
+    }
+    
+    stages{
+        stage('Git Checkout') {
+            steps {
+                script {
+                    def branchToBuild = params.BRANCH ?: 'master'
+                    git branch : branchToBuild,
+                        url: 'https://github.com/chiedo07/sampleApp',
+                        creadentialsid: 'chiedo07'
+                }
+            }
+        }
+        stage('SonarQube Analysis') {
+            steps {
+                echo 'Running SonarQube analysis...'
+                withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
+                    def scannerHome = tool name: 'mysonarscanner', type: 'hudson.plugins.sonar.SonarRunnerInstallation'
+                    withSonarQubeEnv('sonarqube-server') {
+                        sh """
+                            ${scannerHome}/bin/sonar-scanner \
+                                -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
+                                -Dsonar.sources=. \
+                                -Dsonar.host.url=${SONAR_HOST_URL} \
+                                -Dsonar.login=$SONAR_TOKEN
+                        """
+                    }
+                }
+            }
+        }
+        stage('SonarQube Quality Gate') {
+            steps {
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: false
+                }
+            }
+        }
+        stage('Docker Build') {
+            steps {
+                echo 'Building Image...'
+                sh "docker build -t chiedo95/sampleapp:${APP_VERSION} ."
+            }
+        }
+        stage('Docker Push') {
+            steps {
+                echo 'Pushing Image...'
+                withCredentials([usernamePassword(credentialsId: 'dockerhub-credentials', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                    sh """
+                        echo "${DOCKER_PASS}" | docker login -u "${DOCKER_USER}" --password-stdin
+                        docker tag chiedo95/sampleapp:${APP_VERSION} ${DOCKER_USER}/sampleapp:${APP_VERSION}
+                        docker push ${DOCKER_USER}/sampleapp:${APP_VERSION}
+                    """
+                }
+            }
+        }
+    }
+}
