@@ -34,7 +34,7 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 script {
-                    buildDocker("v1.10")
+                    buildDocker("$buildTag")
                 }
             }
         }
@@ -42,7 +42,15 @@ pipeline {
         stage('Push to Docker Registry') {
             steps {
                 script {
-                    pushDocker("v1.10")
+                    pushDocker("$buildTag")
+                }
+            }
+        }
+
+        stage('Login to Azure and AKS') {
+            steps {
+                script {
+                    loginAzureAKS()
                 }
             }
         }
@@ -53,7 +61,10 @@ pipeline {
             }
             steps {
                 script {
-                    deployK8s("v1.10")
+
+                    input message: "Do you want to deploy to Kubernetes?", ok: "Deploy"
+                    echo "Deploying to environment: ${env.ENV}"
+                    deployAKS("$buildTag")
                 }
             }
         }
